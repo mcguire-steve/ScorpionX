@@ -21,18 +21,26 @@ limitations under the License.
 
 #include <BioloidController.h>
 
-
-// Define servos center pose.
-PROGMEM prog_uint16_t center_pose[] = {2, 2048, 2048};
-
+// Main controller instance.
 BioloidController bioloid = BioloidController(1000000);
 
 const int   kServoCount = 2;
 
+const int   kCenter   = 2048;
+const int   kMinPan   = 512;
+const int   kMaxPan   = 3584;
+const int   kMinTilt  = 1024;
+const int   kMaxTilt  = 3072;
+
+// Define servos center pose.
+PROGMEM prog_uint16_t center_pose[] = {2, kCenter, kCenter};
+PROGMEM prog_uint16_t pan_min_pose[] = {2, kMinPan, kCenter};
+PROGMEM prog_uint16_t pan_max_pose[] = {2, kMaxPan, kCenter};
+
 int         servo_id;
 int         servo_position;
-boolean     IDCheck;
-boolean     RunCheck;
+String      input_string;
+char        input_buffer[10];
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -43,60 +51,70 @@ void setup()
    // Initialize variables.
    servo_id = 1;
    servo_position = 0;
-   IDCheck = 1;
-   RunCheck = 0;
    
   // Open serial port.
   Serial.begin(9600);
   delay(500);   
-  Serial.println("###########################");    
+  Serial.println("==================================="); 
   Serial.println("Serial Communication Established.");    
 
   // Check Lipo Battery Voltage.
   CheckVoltage();
 
+  // Center servos.
   CenterServos();
-  
-  //Scan Servos, return position.
-  ScanServos();
-  
-  MoveTest();
-  
-  
+    
+  // Show menu options.  
   MenuOptions();
- 
-  RunCheck = 1;
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
-  int input = Serial.read();
+  char c = Serial.read();
 
-  switch (input) {
+  if (c != -1) {
+    
+    input_string += c;
+        
+    if (c == '.') {
+      input_string.toCharArray(input_buffer, 10);
+      int input = atoi(input_buffer);
 
-  case '1':    
-    CheckVoltage();
-    break;
-
-  case '2':    
-    RelaxServos();
-    break;
-
-  case '3':    
-    CenterServos();
-    break; 
-
-  case '4':    
-    ScanServos();
-    break;     
-
-  case '5':
-    CenterServos();
-    MoveTest();
-    break;
- 
+      if (input == 1) {
+        CheckVoltage();
+      }
+    
+      if (input == 2) {
+        RelaxServos();
+      }
+    
+      if (input == 3) {
+        CenterServos();
+      }
+    
+      if (input == 4) {
+        ScanServos();
+      }
+    
+      if (input == 5) {
+        CenterServos();
+        MoveTestBasic();
+      }
+    
+      if (input > 10) {
+        MoveTestInterp(input);
+      }
+    
+      // Show menu.
+      if (input != -1) {
+        MenuOptions();  
+      }
+      
+      // Reset input string.
+      input_string = "";
+    }
   }
 }
 
@@ -139,10 +157,6 @@ void CheckVoltage()
   }
   
   Serial.println("===================================");
-
-  if (RunCheck == 1) {
-    MenuOptions();
-  }
 }
 
 
@@ -157,10 +171,6 @@ void RelaxServos()
     Relax(servo_id);
     servo_id = (servo_id++) % kServoCount;  // Overflow guard.
     delay(50);
-  }
-
-  if (RunCheck == 1) {
-    MenuOptions();
   }
 }
 
@@ -188,16 +198,14 @@ void CenterServos()
     bioloid.interpolateStep();         // move servos, if necessary. 
     delay(1);
   }
-
-  if (RunCheck == 1) {
-    MenuOptions();
-  }
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
 void ScanServos()
 {
+  boolean     IDCheck = true;
+  
   servo_id = 1;  
   Serial.println("===================================");
   Serial.println("Scanning Servo Positions");
@@ -228,48 +236,97 @@ void ScanServos()
   }
 
   Serial.println("===================================");
-  
-  if (RunCheck == 1) {
-    MenuOptions();
-  }
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-void MoveTest()
+void MoveTestBasic()
 {
   Serial.println("===================================");
   Serial.println("Initializing Movement Test");  
   Serial.println("===================================");
   delay(500);  
   
+  ///----- Servo ID #1 (Pan)
+  Serial.print("Moving Servo ID: 1");
+
+  // Initialize.
   servo_id = 1;
   servo_position = 2048;
-  while (servo_id <= kServoCount) {
-    Serial.print("Moving Servo ID: ");
-    Serial.println(servo_id);  
 
-    while (servo_position >= 1024) {  
-      SetPosition(servo_id, servo_position);
-      servo_position = servo_position--;
-      delay(2);
-    }
+  while (servo_position >= kMinPan) {  
+    SetPosition(servo_id, servo_position);
+    servo_position = servo_position--;
+    delay(1);
+  }
 
-    while (servo_position <= 2048) {  
-      SetPosition(servo_id, servo_position);
-      servo_position = servo_position++;
-      delay(2);
-    }
+  while (servo_position <= kMaxPan) {  
+    SetPosition(servo_id, servo_position);
+    servo_position = servo_position++;
+    delay(1);
+  }
 
-    // Iterate to next servo ID.
-    servo_id = (servo_id++) % kServoCount;  // Overflow guard.
+
+  ///----- Servo ID #2 (Tilt)
+  Serial.print("Moving Servo ID: 2");
+
+  // Initialize.
+  servo_id = 2;
+  servo_position = 2048;
+
+  while (servo_position >= kMinTilt) {  
+    SetPosition(servo_id, servo_position);
+    servo_position = servo_position--;
+    delay(1);
+  }
+
+  while (servo_position <= kMaxTilt) {  
+    SetPosition(servo_id, servo_position);
+    servo_position = servo_position++;
+    delay(1);
   }
 
   Serial.println("===================================");
-
-  if (RunCheck == 1) {
-    MenuOptions();
-  }
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+void MoveTestInterp(int time)
+{
+  Serial.println("===================================");
+  Serial.println("Initializing Pan");  
+  Serial.println("===================================");
+  delay(500);  
+  
+  ///----- Set initial pose.
+  // Load the pose from FLASH, into the nextPose buffer.
+  bioloid.loadPose(pan_min_pose);
+ 
+  // Read in current servo positions to the curPose buffer. 
+  bioloid.readPose();            
+  
+  // Setup for interpolation from current->next over 1/2 a second.
+  bioloid.interpolateSetup(3000);      
+  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
+    bioloid.interpolateStep();         // move servos, if necessary. 
+    delay(1);
+  }
+
+    
+  ///----- Reset servo position to min pan.
+  // Load the pose from FLASH, into the nextPose buffer.
+  bioloid.loadPose(pan_max_pose);
+ 
+  // Read in current servo positions to the curPose buffer. 
+  bioloid.readPose();            
+  
+  // Setup for interpolation from current->next over 1/2 a second.
+  bioloid.interpolateSetup(time);      
+  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
+    bioloid.interpolateStep();         // move servos, if necessary. 
+    delay(1);
+  }
+
+
+  Serial.println("===================================");
+}
