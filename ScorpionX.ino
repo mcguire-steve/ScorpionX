@@ -40,15 +40,9 @@ PROGMEM prog_uint16_t pan_min_pose[] = {2, kMinPan, kCenter};
 PROGMEM prog_uint16_t pan_max_pose[] = {2, kMaxPan, kCenter};
 
 
-
-// Define figure 8.
-PROGMEM prog_uint16_t pan_midmin_tilt_top[] = {2, kMinPan/2.0, 2348};
-PROGMEM prog_uint16_t pan_midmin_tilt_bot[] = {2, kMinPan/2.0, 1748};
-PROGMEM prog_uint16_t pan_midmax_tilt_top[] = {2, kMaxPan/2.0, 2348};
-PROGMEM prog_uint16_t pan_midmax_tilt_bot[] = {2, kMaxPan/2.0, 1748};
-
 int         servo_id;
 int         servo_position;
+bool        moving[kServoCount];
 int         servo_positions[kServoCount];
 String      input_string;
 char        input_buffer[10];
@@ -116,8 +110,8 @@ void loop()
     
       if (input > 10) {
 //        MoveSwing(input);
-        MoveSwingSmooth(input);
-//        MoveFigure8(input);
+//        MoveSwingSmooth(input);
+        MoveFigure8(input);
       }
     
       // Show menu.
@@ -362,7 +356,11 @@ void SetSpeed(int rpm)
   ax12write(AX_GOAL_SPEED_L);
   ax12write(2);
   for (int ii=0; ii < kServoCount; ii++) {
-    temp = rpm >> BIOLOID_SHIFT;
+    if (ii==0) {
+      temp = rpm;
+    } else {
+      temp = rpm/2;
+    }
     checksum += (temp&0xff) + (temp>>8) + (ii+1);
     ax12write(ii+1);
     ax12write(temp&0xff);
@@ -380,6 +378,12 @@ void GotoPose(const unsigned int* pose)
   for (int ii=0; ii < kServoCount; ii++) {
     servo_positions[ii] = pgm_read_word_near(pose+1+ii) << BIOLOID_SHIFT;   
   }
+  Serial.println("Servo position1: ");
+  Serial.println(servo_positions[0]);
+  Serial.println(servo_positions[0] >> BIOLOID_SHIFT);
+  Serial.println("Servo position2: ");
+  Serial.println(servo_positions[1]);
+  Serial.println(servo_positions[1] >> BIOLOID_SHIFT);
   
   int temp;
   int length = 4 + (kServoCount * 3);   // 3 = id + pos(2byte)
@@ -404,7 +408,7 @@ void GotoPose(const unsigned int* pose)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void GotoPose2(int pose)
+void GotoPose2(int pan, int tilt)
 {
   int temp;
   int length = 4 + (kServoCount * 3);   // 3 = id + pos(2byte)
@@ -419,9 +423,9 @@ void GotoPose2(int pose)
   ax12write(2);
   for (int ii=0; ii < kServoCount; ii++) {
     if (ii==0) {
-      temp = pose >> BIOLOID_SHIFT;
+      temp = pan;
     } else {
-      temp = kCenter >> BIOLOID_SHIFT;
+      temp = tilt;
     }
     checksum += (temp&0xff) + (temp>>8) + (ii+1);
     ax12write(ii+1);
@@ -434,7 +438,7 @@ void GotoPose2(int pose)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-void MoveSwingSmooth(int time)
+void MoveSwingSmooth(int rpm)
 {
   Serial.println("===================================");
   Serial.println("Initializing Pan Swing");  
@@ -456,25 +460,16 @@ void MoveSwingSmooth(int time)
   }
 
     
-  ///----- Set goal pose as max_pan.
-  SetSpeed(time);
+  ///----- Set speed and final pose.
+  SetSpeed(rpm);    
   GotoPose(pan_max_pose);
-  
-  
-//  GotoPose2(3000);
-//  while (ax12GetRegister(servo_id, 36, 2) != 3000) {
-//    delay(1);
-//  }
-//  Serial.println("Am at 3000.");
-
-
 
   Serial.println("===================================");
 }
 
 
 ////////////////////////////////////////////////////////////////////////////////
-void MoveFigure8(int time)
+void MoveFigure8(int rpm)
 {
   Serial.println("===================================");
   Serial.println("Initializing Pan Swing");  
@@ -496,120 +491,98 @@ void MoveFigure8(int time)
   }
 
     
-  ///----- Figure8 pan: midmin -- tilt: top.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(pan_midmin_tilt_top);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
+  ///----- Set speed.
+  SetSpeed(rpm);  
+
+  int pan, tilt;  
   
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = (kMinPan+kCenter)/2;
+  tilt = 2348;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-  ///----- Figure8 pan: min -- tilt: center.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(pan_min_pose);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = kMinPan;
+  tilt = kCenter;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-  ///----- Figure8 pan: midmin -- tilt: bot.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(pan_midmin_tilt_bot);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = (kMinPan+kCenter)/2;
+  tilt = 1748;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-  ///----- Figure8 pan: center -- tilt: center.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(center_pose);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = kCenter;
+  tilt = kCenter;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-
-
-  ///----- Figure8 pan: midmax -- tilt: top.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(pan_midmax_tilt_top);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = (kMaxPan+kCenter)/2;
+  tilt = 2348;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-  ///----- Figure8 pan: max -- tilt: center.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(pan_max_pose);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = kMaxPan;
+  tilt = kCenter;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-  ///----- Figure8 pan: midmax -- tilt: bot.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(pan_midmax_tilt_bot);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = (kMaxPan+kCenter)/2;
+  tilt = 1748;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
 
-  ///----- Figure8 pan: center -- tilt: center.
-  // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(center_pose);
- 
-  // Read in current servo positions to the curPose buffer. 
-  bioloid.readPose();            
-  
-  // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(time/4.0);      
-  while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
-    bioloid.interpolateStep();         // move servos, if necessary. 
+  pan = kCenter;
+  tilt = kCenter;  
+  GotoPose2(pan, tilt);
+  moving[0] = ax12GetRegister(1, 46, 1);
+  moving[1] = ax12GetRegister(2, 46, 1);
+  while (moving[0] == true || moving[1] == true) {
+    moving[0] = ax12GetRegister(1, 46, 1);
+    moving[1] = ax12GetRegister(2, 46, 1);
     delay(1);
   }
-
 
   Serial.println("===================================");
 }
