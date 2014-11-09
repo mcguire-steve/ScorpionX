@@ -22,15 +22,16 @@ limitations under the License.
 #include <BioloidController.h>
 
 // Main controller instance.
-BioloidController bioloid = BioloidController(1000000);
+BioloidController bioloid = BioloidController(115200);
 
 const int   kServoCount = 2;
 
 const int   kCenter   = 2048;
-const int   kMinPan   = 512;
-const int   kMaxPan   = 3584;
-const int   kMinTilt  = 1024;
-const int   kMaxTilt  = 3072;
+const int   kMinPan   = 1024;
+const int   kMaxPan   = 3072;
+const int   kMinTilt  = 1792;
+const int   kMaxTilt  = 2304;
+
 
 // Define servos center pose.
 PROGMEM prog_uint16_t center_pose[] = {2, kCenter, kCenter};
@@ -58,11 +59,11 @@ void setup()
    servo_position = 0;
    
   // Open serial port.
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(500);   
   Serial.println("==================================="); 
   Serial.println("Serial Communication Established.");    
-
+  
   // Check Lipo Battery Voltage.
   CheckVoltage();
 
@@ -111,7 +112,9 @@ void loop()
       if (input > 10) {
 //        MoveSwing(input);
 //        MoveSwingSmooth(input);
-        MoveFigure8(input);
+//        MoveFigure8(input);
+//        MoveFigure8Crappy(input);
+        MoveFigure8Sina(input);
       }
     
       // Show menu.
@@ -191,7 +194,8 @@ void CenterServos()
   delay(100);                    
 
   // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(center_pose);
+//  bioloid.loadPose(center_pose);
+  bioloid.loadPose(pan_min_pose);
  
   // Read in current servo positions to the curPose buffer. 
   bioloid.readPose();            
@@ -356,7 +360,7 @@ void SetSpeed(int rpm)
   ax12write(AX_GOAL_SPEED_L);
   ax12write(2);
   for (int ii=0; ii < kServoCount; ii++) {
-    if (ii==0) {
+    if (ii == 0) {
       temp = rpm;
     } else {
       temp = rpm/2;
@@ -467,6 +471,31 @@ void MoveSwingSmooth(int rpm)
   Serial.println("===================================");
 }
 
+////////////////////////////////////////////////////////////////////////////////
+void MoveFigure8Sina(int num_iters)
+{
+  Serial.println("===================================");
+  Serial.println("Initializing Sina Swing");  
+  Serial.println("===================================");
+  delay(500);  
+  
+  ///----- Set max speed.
+  SetSpeed(1500);
+
+  ///----- Set max speed.
+  GotoPose2(kMinPan, kCenter);
+
+  const float pi = 3.1415;
+  const float step_size = 2.0*pi / (num_iters - 10.0);
+  for (int jj = 0; jj < 5; jj++) {
+    for (float ii=-pi; ii < pi; ii += step_size) {
+      GotoPose2((kMaxPan-kMinPan)*0.5 * cos(ii) + kCenter, (kMaxTilt-kMinTilt)*0.5 * sin(2*ii) + kCenter);
+      delay(2);
+    }
+  }
+}
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 void MoveFigure8(int rpm)
@@ -478,13 +507,13 @@ void MoveFigure8(int rpm)
   
   ///----- Set initial pose.
   // Load the pose from FLASH, into the nextPose buffer.
-  bioloid.loadPose(center_pose);
+  bioloid.loadPose(pan_min_pose);
  
   // Read in current servo positions to the curPose buffer. 
   bioloid.readPose();            
   
   // Setup for interpolation from current->next over 1/2 a second.
-  bioloid.interpolateSetup(3000);      
+  bioloid.interpolateSetup(500);      
   while (bioloid.interpolating > 0) {  // do this while we have not reached our new pose
     bioloid.interpolateStep();         // move servos, if necessary. 
     delay(1);
@@ -493,96 +522,52 @@ void MoveFigure8(int rpm)
     
   ///----- Set speed.
   SetSpeed(rpm);  
+  
+  int min_pos = 5;
 
   int pan, tilt;  
   
-  pan = (kMinPan+kCenter)/2;
-  tilt = 2348;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
+  GotoPose2(kMaxPan, kMaxTilt);
+  while(1) {
+    servo_position =  ax12GetRegister(1, 36, 2);
+    
+    if (servo_position != -1) {
+      if (servo_position > (kMaxPan+kCenter)/2) {
+        GotoPose2(kMaxPan, kCenter);
+      } else if (servo_position > kCenter) {
+        GotoPose2(kMaxPan, kMinTilt);
+      } else if (servo_position > (kMinPan+kCenter)/2) {
+        GotoPose2(kMaxPan, kCenter);
+      }
+    }
+    
+    if (abs(servo_position - kMaxPan) < min_pos) {
+      break;
+    }
+  }
+  
+
+  GotoPose2(kMinPan, kMaxTilt);
+  while(1) {
+    servo_position =  ax12GetRegister(1, 36, 2);
+    if (servo_position != -1) {
+      if (servo_position < (kMinPan+kCenter)/2) {
+        GotoPose2(kMinPan, kCenter);
+      } else if (servo_position < kCenter) {
+        GotoPose2(kMinPan, kMinTilt);
+      } else if (servo_position < (kMaxPan+kCenter)/2) {
+        GotoPose2(kMinPan, kCenter);
+      }
+    }
+      
+    if (abs(servo_position - kMinPan) < min_pos) {
+      break;
+    }
   }
 
-  pan = kMinPan;
-  tilt = kCenter;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
 
-  pan = (kMinPan+kCenter)/2;
-  tilt = 1748;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
-
-  pan = kCenter;
-  tilt = kCenter;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
-
-  pan = (kMaxPan+kCenter)/2;
-  tilt = 2348;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
-
-  pan = kMaxPan;
-  tilt = kCenter;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
-
-  pan = (kMaxPan+kCenter)/2;
-  tilt = 1748;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
-
-  pan = kCenter;
-  tilt = kCenter;  
-  GotoPose2(pan, tilt);
-  moving[0] = ax12GetRegister(1, 46, 1);
-  moving[1] = ax12GetRegister(2, 46, 1);
-  while (moving[0] == true || moving[1] == true) {
-    moving[0] = ax12GetRegister(1, 46, 1);
-    moving[1] = ax12GetRegister(2, 46, 1);
-    delay(1);
-  }
-
-  Serial.println("===================================");
+  ///----- RESET.
+  SetSpeed(200);  
+  CenterServos();
 }
+
