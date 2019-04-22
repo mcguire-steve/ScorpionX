@@ -106,6 +106,8 @@ void ScanServos();
 void MoveTestBasic();
 void GotoPose2(int pan, int tilt);
 bool humanInterface;
+bool binaryMachine;
+
 void ListServos();
 void AssignServoID(uint8_t src, uint8_t dest);
 void updateServos();
@@ -113,8 +115,9 @@ void updateServos();
 ////////////////////////////////////////////////////////////////////////////////
 void setup()
 {
-  humanInterface = true; 
-   pinMode(0, OUTPUT);  
+  humanInterface = true;
+  binaryMachine = false;
+  pinMode(0, OUTPUT);  
 
    
   // Open terminal serial port.
@@ -135,8 +138,7 @@ void setup()
   SetSpeed(20); 
   // Center servos.
   CenterServos();
-
-
+  
   // Show menu options.  
   MenuOptions();
 }
@@ -174,6 +176,7 @@ void doMachineCommand(scorpion_cmd_t *cmd)
     case SX_EXIT_MACHINE:
     default:
       humanInterface = true;
+      binaryMachine = false;
       MenuOptions();
       break;
     }
@@ -205,7 +208,15 @@ void processMachine(char* input_buffer)
   delete[] thisCmd.commands;
 }
 
-
+void sendMachineState()
+{
+  updateServos();
+  //Send the number of servos first
+  Serial.write((uint8_t*)&servoCount, sizeof(servoCount));
+  //And a record for each servo
+  //printServoState(i);
+  Serial.write((uint8_t*)servo_states, sizeof(servo_state_t)*servoCount);
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -216,7 +227,16 @@ void loop()
 
    input_buffer[input_count] = c;
    input_buffer[++input_count] = 0; //null terminate
-    
+   if ((binaryMachine == true) && (input_count == sizeof(scorpion_cmd_t)))
+      {
+	//Handle pure binary commands first
+	doMachineCommand((scorpion_cmd_t*)input_buffer);
+	// Reset input string.
+	input_buffer[0] = 0;
+	input_count = 0;
+	return;
+      }
+   
     if (c == '\r') { //replace with \r to use 0xD as a terminator
 
       if (!humanInterface)
@@ -315,7 +335,14 @@ void loop()
 	  humanInterface = false;
 	}
       
-      if (input > 10) {
+      if (input == 11)
+	{
+	  Serial.println("Setting pure binary machine interface");
+	  humanInterface = false;
+	  binaryMachine = true;
+	}
+      
+      if (input > 11) {
 	Serial.println("No commands defined!");
       }
     
@@ -328,7 +355,18 @@ void loop()
       input_buffer[0] = 0;
       input_count = 0;
     }
+
   }
+
+
+  if (!humanInterface && binaryMachine)
+    {
+      //Constantly stream position when in machine interface mode
+      sendMachineState();
+    }
+ 
+  
+  
 }
 
 
@@ -349,7 +387,8 @@ void MenuOptions()
     Serial.println("8) List servos");
     Serial.println("9) Assign servo id <src> to <dest>");
     Serial.println(""); 
-    Serial.println("10) Switch to machine interface");                
+    Serial.println("10) Switch to ascii machine interface");
+    Serial.println("11) Switch to binary machine interface");
     Serial.println("===================================");
     Serial.println(""); 
 }

@@ -90,8 +90,8 @@ class ArbotiX:
         #print 'Servo map:'
         #print self.servoMap
 
-        #Switch to machine mode
-        self._ser.write(b'10\r')
+        #Switch to pure binary machine mode
+        self._ser.write(b'11\r')
 
         #Consume the response
         self._ser.readline()
@@ -103,26 +103,27 @@ class ArbotiX:
         cmds = []
         cmds.append(FWCommand(self.servoMap[0].id,SX_NOOP, 0))
         while True:
-            self.writeCommands(cmds)
-            time.sleep(0.05) #10hz update over the serial
+            self.updateState()
 
     def writeCommands(self, cmdList):
         if len(cmdList) == 0:
             return
-        #print 'Writing %d commands...' % len(cmdList)
+        print 'Writing %d commands...' % len(cmdList)
         #Write the number of commands first
-        self._mutex.acquire()  
-        self._ser.write(str(len(cmdList))+' ')
+        self._mutex.acquire()
+
+        #Pure binary write of commands:
 
         for cmd in cmdList:
             #print '%d %d %d\n' % (cmd.id, cmd.cmd, cmd.value)
-            self._ser.write(str(cmd.id) + ' ')
-            self._ser.write(str(cmd.cmd) + ' ')
-            self._ser.write(str(cmd.value) + ' ')
-       
-        self._ser.write(b'\r')
-        
-        #After we write, read from the port to pick up the status line
+            cmdBlock = struct.pack('BBH', cmd.id, cmd.cmd, cmd.value)
+            self._ser.write(cmdBlock)
+ 
+        self._mutex.release()
+
+    def updateState(self):
+
+        #read from the port to pick up the status line
         #First char: number of servos that we have status on
 
         numServos = struct.unpack("<B", self._ser.read(1))
@@ -133,12 +134,7 @@ class ArbotiX:
             #This assumes that the mapping is well known for each servo already
             #print 'Record is %d bytes long' % self.servoMap[i].getLength()
             self.servoMap[i].update(self._ser.read(self.servoMap[i].getLength()))
-        self._mutex.release()
-
-    def updateState(self):
-        cmds = []
-        cmds.append(FWCommand(self.servoMap[0].id,SX_NOOP, 0))
-        self.writeCommands(cmds)
+       
 
     def printStatusAll(self):
         self.printStatus(self.servoMap.keys())
