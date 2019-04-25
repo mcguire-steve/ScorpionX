@@ -29,8 +29,17 @@
 # Author: Michael Ferguson
 
 ## @file arbotix.py Low-level code to control an ArbotiX.
+'''
+import serial
+ser = serial.Serial()
+ser.baudrate=250000
+ser.timeout=0.5
+ser.port="/dev/ttyUSB0"
+ser.open()
 
+'''
 import serial, time, sys, thread
+import pdb
 
 from scorpx import *
 from struct import unpack
@@ -55,7 +64,6 @@ class ArbotiX:
         self._ser.port = port
         self._ser.timeout = timeout
         self._ser.open()
-
        
         #Wait for reset
         attempts = 0
@@ -66,35 +74,37 @@ class ArbotiX:
             if firstRead.count("machine interface") > 0:
                 break
             attempts += 1
-            
+
         #Put the device into a known state:
         
         #Get the servo list
         self._ser.write(b'8\r')
 
         #Get the servo count from the first response:
-        response = self._ser.readlines()
-        #print 'Input:'
-        #print response
-        servoCountLine = response[0].split(" ")
+        response = self._ser.read_until("binary machine interface")
+
+        servoCountLine = response.split(" ")
         servoCount = int(servoCountLine[1])
         print 'Found %d servos!' % servoCount
 
         self.servoMap = dict()
+        
+        response = response.split("\r\n")
         responseLine = 2;
         for index in range(0,servoCount):
+
             mapLine = response[responseLine].split(":");
             self.servoMap[index] = ServoState(mapLine[1])
             responseLine+= 1
 
-        #print 'Servo map:'
-        #print self.servoMap
+        print 'Servo map:'
+        print self.servoMap
 
         #Switch to pure binary machine mode
         self._ser.write(b'11\r')
 
         #Consume the response
-        self._ser.readline()
+        response = self._ser.read_until("binary machine interface\r\n")
         
         #Kick off the service loop
         thread.start_new_thread(self.serviceLoop, ())
@@ -105,10 +115,11 @@ class ArbotiX:
         while True:
             self.updateState()
 
+
     def writeCommands(self, cmdList):
         if len(cmdList) == 0:
             return
-        print 'Writing %d commands...' % len(cmdList)
+        #print 'Writing %d commands...' % len(cmdList)
         #Write the number of commands first
         self._mutex.acquire()
 
@@ -118,7 +129,6 @@ class ArbotiX:
             #print '%d %d %d\n' % (cmd.id, cmd.cmd, cmd.value)
             cmdBlock = struct.pack('BBH', cmd.id, cmd.cmd, cmd.value)
             self._ser.write(cmdBlock)
- 
         self._mutex.release()
 
     def updateState(self):
@@ -127,9 +137,9 @@ class ArbotiX:
         #First char: number of servos that we have status on
 
         numServos = struct.unpack("<B", self._ser.read(1))
-
+        #print 'NumServos:', numServos
         #print 'reading status for %d servos' % numServos[0]
-        for i in range(0,numServos[0]):
+        for i in self.servoMap.keys():
             #print 'Updating servo %d' % i
             #This assumes that the mapping is well known for each servo already
             #print 'Record is %d bytes long' % self.servoMap[i].getLength()

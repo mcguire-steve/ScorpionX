@@ -56,7 +56,8 @@ typedef struct
 //void* __dso_handle;
 
 // Main controller instance.
-BioloidController bioloid = BioloidController(115200);
+const uint32_t servoBaud = 250000;
+BioloidController bioloid = BioloidController(servoBaud);
 
 const int   kServoCount = 2;
 const uint8_t maxServos = 32;
@@ -110,6 +111,9 @@ bool binaryMachine;
 
 void ListServos();
 void AssignServoID(uint8_t src, uint8_t dest);
+void SetServoBaud(uint8_t id, uint32_t baud);
+
+
 void updateServos();
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -121,11 +125,13 @@ void setup()
 
    
   // Open terminal serial port.
-  Serial.begin(115200);
-  delay(500);   
+  Serial.begin(250000);
+  //delay(500);   
   Serial.println("BOARD RESET\n"); 
   Serial.println("Serial Communication Established.");    
-
+  Serial.print("Servo baud:");
+  Serial.println(servoBaud, DEC);
+  
   //Populate the dynamic servo finder thing
   ListServos();
 
@@ -222,23 +228,44 @@ void sendMachineState()
 ////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
-  char c = Serial.read();
-  if (c != -1) {
+  int bytesRead = 0;
+  if (Serial.available())
+    {
+      bytesRead = Serial.readBytes(&input_buffer[input_count], Serial.available());
+      input_count += bytesRead;
 
-   input_buffer[input_count] = c;
-   input_buffer[++input_count] = 0; //null terminate
-   if ((binaryMachine == true) && (input_count == sizeof(scorpion_cmd_t)))
-      {
-	//Handle pure binary commands first
-	doMachineCommand((scorpion_cmd_t*)input_buffer);
-	// Reset input string.
-	input_buffer[0] = 0;
-	input_count = 0;
-	return;
-      }
-   
-    if (c == '\r') { //replace with \r to use 0xD as a terminator
+    }
+  
+  if ((binaryMachine == true) && (input_count >= sizeof(scorpion_cmd_t)))
+	{
+	  //Handle pure binary commands first
+	  doMachineCommand((scorpion_cmd_t*)input_buffer);
+	  // Reset input string, removing the command we just processed
+	  memmove(input_buffer, &input_buffer[sizeof(scorpion_cmd_t)], input_count - sizeof(scorpion_cmd_t));
+	  input_count -= sizeof(scorpion_cmd_t);
+	  return;
+	}
 
+  /*
+  Serial.print("Input count:");
+  Serial.println(input_count, DEC);
+  Serial.print("Last byte:");
+  Serial.println(input_buffer[input_count-1], HEX);
+  */
+  
+  if (input_buffer[input_count-1] == '\r')
+    { //replace with \r to use 0xD as a terminator
+      input_buffer[input_count] = 0;
+
+      /*
+      Serial.print("Buffer:");
+      for (int j=0; j < input_count; j++)
+	{
+	  Serial.print(input_buffer[j], HEX);
+	}
+      Serial.println();
+      */
+      
       if (!humanInterface)
 	{
 	  processMachine(input_buffer);
@@ -247,13 +274,13 @@ void loop()
 	  input_count = 0;
 	  return;
 	}
-      
-      int input = atoi(input_buffer);
+
+      int input = atoi(strtok(input_buffer, "\n\r "));
 
 
       if (input == 1) {
         CheckVoltage();
-	}
+      }
       
     
       if (input == 2) {
@@ -265,11 +292,11 @@ void loop()
       }
     
       if (input == 4) {
-          Serial.println("===================================");
-	  Serial.println("Scanning Servo Positions");
-	  Serial.println("===================================");
-	  ScanServos();
-	  for (int i=1; i<=kServoCount; i++)
+	Serial.println("===================================");
+	Serial.println("Scanning Servo Positions");
+	Serial.println("===================================");
+	ScanServos();
+	for (int i=1; i<=kServoCount; i++)
 	  {
 	    Serial.print("Servo ID: ");
 	    Serial.println(i);
@@ -281,15 +308,18 @@ void loop()
       }
     
       if (input == 5) {
-        CenterServos();
-        MoveTestBasic();
+        //Set the servo baud rate to user-provided value
+	int servoID = atoi(strtok(0, "\n\r ")); //skip over set command
+	long desiredBaud = atol(strtok(0, "\n\r "));
+		
+	SetServoBaud(servoID, desiredBaud);
       }
       
       if (input == 6) {
         //From http://arduino.stackexchange.com/questions/1013/how-do-i-split-an-incoming-string
         // Read each command pair 
-	int pan = atoi(strtok(&input_buffer[1], " ")); //skip over set command
-	int tilt = atoi(strtok(0, " ")); 
+	int pan = atoi(strtok(0, "\n\r ")); //skip over set command
+	int tilt = atoi(strtok(0, "\n\r ")); 
 	Serial.print("Moving to pan:");
 	Serial.print(pan, DEC);
 	Serial.print(", tilt:");
@@ -302,19 +332,19 @@ void loop()
 	{
 	  //Move to a specific pan/tilt value over the specified time interval
 	  //From http://arduino.stackexchange.com/questions/1013/how-do-i-split-an-incoming-string
-        // Read each command pair 
-	int pan = atoi(strtok(&input_buffer[1], " ")); //skip over set command
-	int tilt = atoi(strtok(0, " "));
-	int speed = atoi(strtok(0, " "));
+	  // Read each command pair 
+	  int pan = atoi(strtok(0, "\n\r  ")); //skip over set command
+	  int tilt = atoi(strtok(0, "\n\r  "));
+	  int speed = atoi(strtok(0, "\n\r  "));
 	
-	Serial.print("Moving to pan:");
-	Serial.print(pan, DEC);
-	Serial.print(", tilt:");
-	Serial.print(tilt,DEC);
-	Serial.print(",speed:");
-	Serial.println(speed, DEC);
-	SetSpeed(speed);  
-        GotoPose2(pan, tilt);
+	  Serial.print("Moving to pan:");
+	  Serial.print(pan, DEC);
+	  Serial.print(", tilt:");
+	  Serial.print(tilt,DEC);
+	  Serial.print(",speed:");
+	  Serial.println(speed, DEC);
+	  SetSpeed(speed);  
+	  GotoPose2(pan, tilt);
 	}
 
       if (input == 8)
@@ -324,7 +354,7 @@ void loop()
 
       if (input == 9)
 	{
-	  int src = atoi(strtok(&input_buffer[1], " ")); //skip over set command
+	  int src = atoi(strtok(0, "\n\r  ")); //skip over set command
 	  int dest = atoi(strtok(0, " "));
 	  AssignServoID(src,dest);
 	}
@@ -356,9 +386,6 @@ void loop()
       input_count = 0;
     }
 
-  }
-
-
   if (!humanInterface && binaryMachine)
     {
       //Constantly stream position when in machine interface mode
@@ -381,7 +408,7 @@ void MenuOptions()
     Serial.println("2) Relax Servos");            
     Serial.println("3) Center Servos");    
     Serial.println("4) Scan Servos Position");        
-    Serial.println("5) Basic Movement Test");   
+    Serial.println("5) Set servo <id> to baud <baud>");   
     Serial.println("6) Goto <pan> <tilt>");
     Serial.println("7) Goto <pan> <tilt> <speed>");
     Serial.println("8) List servos");
@@ -407,7 +434,7 @@ void CheckVoltage()
   
   if (voltage < 10.0) {
     Serial.println("Voltage levels below 10v, please charge battery.");
-    while (1) { }
+    //while (1) { }
   }
   
   if (voltage > 10.0) {
@@ -463,6 +490,33 @@ void AssignServoID(uint8_t src, uint8_t dest)
   Serial.println("Not implemented yet: Change servo ID <src> to <dest>");
 }
 
+void SetServoBaud(uint8_t id, uint32_t baud)
+{
+  Serial.print("Setting servo ");
+  Serial.print(id, DEC);
+  Serial.print(" to baud:");
+  Serial.println(baud, DEC);
+
+  uint8_t baudVal = 16;
+  switch (baud)
+    {
+    case 115200:
+      baudVal = 16;
+      break;
+    case 250000:
+      baudVal = 7;
+      break;
+    case 500000:
+      baudVal = 3;
+      break;
+    default:
+      Serial.print("Unknown baud rate:");
+      Serial.println(baud, DEC);
+      return;
+    }
+  ax12SetRegister(id, AX_BAUD_RATE, baudVal);
+}
+
 void ListServos()
 {
   servoCount = 0;
@@ -476,11 +530,9 @@ void ListServos()
     //Returns -1 on not found -> needs to have a signed type
     if (curPos > 0)
       {
-	
 	servoMap[servoCount] = servo_id;
 	servoCount++;
       }
-    
     servo_id++;
   }
   Serial.print("Found ");
@@ -525,6 +577,7 @@ uint8_t getLED(uint8_t servoID)
 {
   return ax12GetRegister(servoID, AX_LED, 1);
 }
+
 
 void getState(uint8_t index)
 {

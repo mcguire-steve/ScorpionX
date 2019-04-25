@@ -7,6 +7,7 @@ SX_SET_LED=4
 
 #Firmware command interface:
 import struct
+import pdb
 
 class FWCommand:
     def __init__(self, _id=1, _cmd=0, _value=0):
